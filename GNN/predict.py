@@ -459,7 +459,8 @@ def export_sdf_rdkit(dataframe, output_file='molecules_prostates.sdf'):
 if __name__ == '__main__':
 
     args = argsParser()
-    csv_path = args.csv_path
+    csv_path = '../Datasets/trbl.csv'
+    #csv_path = args.csv_path
     csv = pd.read_csv(csv_path)
     a,b = predict(csv)
     print('Results:')

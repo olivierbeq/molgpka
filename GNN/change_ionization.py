@@ -1077,7 +1077,7 @@ def isAmide(atom, mol):
     pattern_aniline = Chem.MolFromSmarts('[NX3][cc]')
     pattern_sulfonamide = Chem.MolFromSmarts('[NX3][SX4](=[OX1])(=[OX1])')
     pattern_nX3 = Chem.MolFromSmarts('[nX3]')
-    #print('change_ion 1070: ', atom.GetIdx())
+    # print('change_ion 1070: ', atom.GetIdx())
 
     for match in mol.GetSubstructMatches(pattern_amide):
         if match[0] == atom.GetIdx(): # N is the first atom in SMARTS (label :1)
