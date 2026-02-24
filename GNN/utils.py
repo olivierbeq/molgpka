@@ -335,7 +335,7 @@ def average(predicts, labels, smiles, mol_num, test_centers, ionization_states, 
             predicts_average.append(predicts[i])
             test_centers_average.append(test_centers[i])
 
-            if args.mode == 'test' or args.mode == 'infer':
+            if args.mode == 'test' or args.mode == 'infer' or args.mode == 'pH':
 
                 for j in range(len(ionization_states)):
                     if i<= len(ionization_states[j]):
