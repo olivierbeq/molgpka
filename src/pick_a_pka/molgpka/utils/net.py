@@ -4,7 +4,7 @@ from torch.nn import Linear, BatchNorm1d
 from torch_geometric.nn import GATConv, global_add_pool
 from torch_geometric.nn.aggr import AttentionalAggregation
 
-from molgpka.utils.gcn_conv import GCNConv
+from pick_a_pka.molgpka.utils.gcn_conv import GCNConv
 
 n_features = 29
 hidden = 1024

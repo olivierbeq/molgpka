@@ -1,21 +1,12 @@
-from molgpka.predict_pka import _predict_for_protonate
+from pick_a_pka.molgpka.predict_pka import _predict_for_protonate
 from copy import deepcopy
-from rdkit import Chem
 
 from rdkit import Chem
-from rdkit.Chem import AllChem,Draw
+from rdkit.Chem import AllChem
 from rdkit import RDLogger
 RDLogger.DisableLog('rdApp.*')
-from rdkit.Chem import rdmolops
-from rdkit.Chem import rdDepictor
-from rdkit.Chem.Draw import rdMolDraw2D
 from itertools import combinations
 
-import json
-import numpy as np
-import random
-import os
-import copy
 
 def modify_mol(mol, acid_dict, base_dict):
     for at in mol.GetAtoms():

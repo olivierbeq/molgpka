@@ -16,7 +16,7 @@ from importlib import resources
 from .utils.ionization_group import get_ionization_aid
 from .utils.descriptor import mol2vec
 from .utils.net import GCNNet
-import molgpka.models
+import pick_a_pka.models
 
 
 def _load_model(model_file, device="cpu"):
@@ -36,7 +36,7 @@ def _model_pred(m2, aid, model, device="cpu"):
     return pka
 
 def _predict_acid(mol):
-    with resources.as_file(resources.files(molgpka.models).joinpath('weight_acid.pth')) as model_file:
+    with resources.as_file(resources.files(pick_a_pka.models).joinpath('weight_acid.pth')) as model_file:
         model_acid = _load_model(model_file)
 
     acid_idxs= get_ionization_aid(mol, acid_or_base="acid")
@@ -47,7 +47,7 @@ def _predict_acid(mol):
     return acid_res
 
 def _predict_base(mol):
-    with resources.as_file(resources.files(molgpka.models).joinpath('weight_base.pth')) as model_file:
+    with resources.as_file(resources.files(pick_a_pka.models).joinpath('weight_base.pth')) as model_file:
         model_base = _load_model(model_file)
 
     base_idxs= get_ionization_aid(mol, acid_or_base="base")

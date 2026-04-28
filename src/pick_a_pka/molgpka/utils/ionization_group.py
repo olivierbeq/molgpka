@@ -1,15 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import numpy as np
 from rdkit import Chem
 import pandas as pd
 from importlib import resources
-import molgpka.utils
+import pick_a_pka.molgpka.utils
 
 
 def split_acid_base_pattern():
-    with resources.as_file(resources.files(molgpka.utils).joinpath("smarts_pattern.tsv")) as smarts_file:
+    with resources.as_file(resources.files(pick_a_pka.utils).joinpath("smarts_pattern.tsv")) as smarts_file:
         df_smarts = pd.read_csv(smarts_file, sep="\t")
     df_smarts_acid = df_smarts[df_smarts.Acid_or_base == "A"]
     df_smarts_base = df_smarts[df_smarts.Acid_or_base == "B"]

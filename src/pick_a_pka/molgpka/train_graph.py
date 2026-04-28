@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 
-from molgpka.utils.net import GCNNet
+from pick_a_pka.molgpka.utils.net import GCNNet
 
 
 BATCH_SIZE = 128

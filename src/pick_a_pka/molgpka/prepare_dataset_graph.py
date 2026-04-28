@@ -3,7 +3,7 @@ import pickle
 from rdkit import Chem
 from sklearn.model_selection import train_test_split
 
-from molgpka.utils.descriptor import mol2vec
+from pick_a_pka.molgpka.utils.descriptor import mol2vec
 
 
 def dump_datasets(dataset, path):
