@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import rdFMCS
@@ -5,7 +7,9 @@ import time
 from tqdm import tqdm  # For progress tracking
 
 
-def transfer_chirality(original_smiles , protonated_smiles , timeout=10) :
+logger = logging.getLogger(__name__)
+
+def transfer_chirality(original_smiles: str, protonated_smiles: str, timeout: int = 10) -> str:
     """Transfer chirality with timeout and better error handling."""
     try :
         # Create molecules from SMILES
@@ -16,11 +20,8 @@ def transfer_chirality(original_smiles , protonated_smiles , timeout=10) :
             return protonated_smiles
 
         # Check if the original molecule has chiral centers
-        chiral = False
-        for atom in mol_orig.GetAtoms() :
-            if atom.GetChiralTag() != Chem.rdchem.ChiralType.CHI_UNSPECIFIED :
-                chiral = True
-                break
+        chiral = any(atom.GetChiralTag() != Chem.rdchem.ChiralType.CHI_UNSPECIFIED
+                     for atom in mol_orig.GetAtoms())
 
         if not chiral :
             return protonated_smiles
@@ -30,7 +31,7 @@ def transfer_chirality(original_smiles , protonated_smiles , timeout=10) :
 
         # If substructure matching fails, try MCS with timeout
         if not match :
-            mcs = rdFMCS.FindMCS([ mol_orig , mol_prot ] ,
+            mcs = rdFMCS.FindMCS([mol_orig , mol_prot] ,
                                  completeRingsOnly=True ,
                                  matchValences=False ,
                                  ringMatchesRingOnly=True ,
@@ -44,15 +45,13 @@ def transfer_chirality(original_smiles , protonated_smiles , timeout=10) :
 
                 if orig_match and prot_match :
                     # Create mapping from original to protonated atoms
-                    atom_map = { }
-                    for i , j in zip(orig_match , prot_match) :
-                        atom_map[ i ] = j
+                    atom_map = dict(zip(orig_match, prot_match))
 
                     # Transfer chirality
                     for orig_idx , orig_atom in enumerate(mol_orig.GetAtoms()) :
                         chiral_tag = orig_atom.GetChiralTag()
                         if chiral_tag != Chem.rdchem.ChiralType.CHI_UNSPECIFIED and orig_idx in atom_map :
-                            prot_atom = mol_prot.GetAtomWithIdx(atom_map[ orig_idx ])
+                            prot_atom = mol_prot.GetAtomWithIdx(atom_map[orig_idx])
                             prot_atom.SetChiralTag(chiral_tag)
                 else :
                     return protonated_smiles
@@ -64,7 +63,7 @@ def transfer_chirality(original_smiles , protonated_smiles , timeout=10) :
                 orig_atom = mol_orig.GetAtomWithIdx(orig_idx)
                 prot_atom = mol_prot.GetAtomWithIdx(prot_idx)
                 chiral_tag = orig_atom.GetChiralTag()
-                if chiral_tag != Chem.rdchem.ChiralType.CHI_UNSPECIFIED :
+                if chiral_tag != Chem.rdchem.ChiralType.CHI_UNSPECIFIED:
                     prot_atom.SetChiralTag(chiral_tag)
 
         # Optionally, you can reassign stereochemistry (which may also update CIP labels).
@@ -84,30 +83,13 @@ def process_transfer_chirality_in_batches(df , batch_size=100) :
 
     # Only process rows where SMILES are different
     rows_to_process = df[ df[ 'Smiles' ] != df[ 'Predicted pKa smiles' ] ]
-    total_rows = len(rows_to_process)
 
-    print(f"Processing {total_rows} molecules with chiral centers in batches of {batch_size}")
+    logger.info(f"Processing {len(rows_to_process)} molecules with chiral centers in batches of {batch_size}.")
 
-    for i in tqdm(range(0 , total_rows , batch_size), desc="Transferring chirality") :
+    for i in range(0 , len(rows_to_process) , batch_size):
         batch = rows_to_process.iloc[ i :i + batch_size ]
-
-        for _ , row in batch.iterrows() :
-            idx = row.name
-            orig = row[ 'Smiles' ]
-            prot = row[ 'Predicted pKa smiles' ]
-            updated = transfer_chirality(orig , prot)
+        for idx, row in batch.iterrows() :
+            updated = transfer_chirality(row[ 'Smiles' ] , row[ 'Predicted pKa smiles' ])
             result_df.at[ idx , 'Predicted pKa smiles updated' ] = updated
 
     return result_df
-
-
-# Example usage
-if __name__ == '__main__' :
-    csv_path = r'C:\Users\Jerome Genzling\OneDrive - McGill University\Documents\Research\pKa predictor\ACIE Submission\pka_predictor_ben\Datasets\onlycsv.csv'
-    csv = pd.read_csv(csv_path)
-
-    # Process in batches
-    result = process_transfer_chirality_in_batches(csv , batch_size=50)
-
-    # Output results
-    result.to_csv(csv_path.replace('.csv' , '_updated.csv') , index=False)

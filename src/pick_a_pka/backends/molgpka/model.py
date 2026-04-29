@@ -4,18 +4,17 @@ from rdkit.Chem.MolStandardize import rdMolStandardize
 from rdkit.Chem import AllChem
 from importlib import resources
 
-from .model_arch import MolGpKaNet
+from pick_a_pka.core.base import BasePKaModel
+from .network import MolGpKaNet
 from .featurizer import mol_to_graph, get_ionization_aid
 from .protonation import compute_microstates
 
 
-class MolGpKaModel:
+class MolGpKaModel(BasePKaModel):
     def __init__(self, device="cpu"):
-        self.device = device
-
-        # Load internal model paths
-        pkg = "pick_a_pka.models.molgpka"
-
+        super().__init__(device=device)
+        # Load weights from the dedicated resources namespace
+        pkg = "pick_a_pka.backends.molgpka.resources"
         self.model_acid = self._load_model(pkg, 'weight_acid.pth')
         self.model_base = self._load_model(pkg, 'weight_base.pth')
 

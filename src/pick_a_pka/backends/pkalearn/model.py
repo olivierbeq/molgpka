@@ -2,12 +2,11 @@ import torch
 from rdkit import Chem
 from importlib import resources
 
-from .model_arch import PkaLearnGNN
-from .featurizer import mol_to_graph
-from .inference import predict_single
+from pick_a_pka.core.base import BasePKaModel
+from .network import PkaLearnGNN
 
 
-class PkaLearnModel:
+class PkaLearnModel(BasePKaModel):
     DEFAULT_CONFIG = {
         'atom_feature_element': False,
         'atom_feature_electronegativity': True,
@@ -35,7 +34,7 @@ class PkaLearnModel:
     }
 
     def __init__(self, device="cpu", config=None):
-        self.device = device
+        super().__init__(device=device)
         self.config = config or self.DEFAULT_CONFIG
         self.model = PkaLearnGNN(feature_size=19, edge_dim=7, model_params=self.config)
         self._load_weights()
@@ -43,7 +42,7 @@ class PkaLearnModel:
         self.model.eval()
 
     def _load_weights(self):
-        pkg = "pick_a_pka.models.pkalearn"
+        pkg = "pick_a_pka.backends.pkalearn.resources"
         with resources.as_file(resources.files(pkg).joinpath("train_AAc-1_best.pth")) as path:
             ckpt = torch.load(path, map_location=self.device, weights_only=True)
         state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
@@ -66,7 +65,48 @@ class PkaLearnModel:
         return predict_ladder(self, smiles_str, self.config)
 
     def predict_pka(self, mol, **kwargs):
-        return self.predict(mol, **kwargs)
+        mol_clean = Chem.RemoveHs(mol) if isinstance(mol, Chem.Mol) else Chem.MolFromSmiles(mol)
+        ladder = self.predict(mol_clean, **kwargs)
+
+        base_pka = {}
+        acid_pka = {}
+
+        for step in ladder:
+            idx = step['center']
+            pka = step['pka']
+
+            try:
+                atom = mol_clean.GetAtomWithIdx(idx)
+                sym = atom.GetSymbol()
+                is_acid = False
+
+                # Simple chemical heuristic to separate acids from bases
+                if sym in ['O', 'S', 'C', 'P']:
+                    is_acid = True
+                elif sym == 'N':
+                    # Check for amides/sulfonamides
+                    for nbr in atom.GetNeighbors():
+                        if nbr.GetSymbol() in ['C', 'S', 'P']:
+                            for bond in nbr.GetBonds():
+                                if bond.GetBondTypeAsDouble() == 2.0 and bond.GetOtherAtom(nbr).GetSymbol() in ['O',
+                                                                                                                'S']:
+                                    is_acid = True
+                                    break
+                        if is_acid:
+                            break
+            except Exception:
+                is_acid = False
+
+            if is_acid:
+                acid_pka[idx] = pka
+            else:
+                base_pka[idx] = pka
+
+        return {
+            "base_pka": base_pka,
+            "acid_pka": acid_pka,
+            "mol": mol_clean
+        }
 
     def predict_microstates(self, mol, pH=7.4):
         from .microstates import compute_microstates_at_ph

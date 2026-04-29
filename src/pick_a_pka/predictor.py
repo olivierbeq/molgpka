@@ -1,8 +1,8 @@
 from typing import Literal
 from rdkit import Chem
 
-from .molgpka.model import MolGpKaModel
-from .pkalearn.model import PkaLearnModel
+from .backends.molgpka.model import MolGpKaModel
+from .backends.pkalearn.model import PkaLearnModel
 
 
 class PKaPredictor:
@@ -13,7 +13,7 @@ class PKaPredictor:
             **kwargs,
     ):
         if model not in ["molgpka", "pkalearn"]:
-            raise ValueError(f"Unknown backend: {self.backend}. Choose 'molgpka' or 'pkalearn'.")
+            raise ValueError(f"Unknown backend: {model}. Choose 'molgpka' or 'pkalearn'.")
 
         self.model_name = model
         self.device = device

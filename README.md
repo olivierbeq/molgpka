@@ -80,7 +80,7 @@ ladder = mdl.predict_pka("OC(=O)c1ccccc1NC(=O)c1ccc(c2ccccc2)cc1")
 Determine the dominant protonation state of a drug-like molecule at physiological pH (7.4).
 
 ```python
-mdl = PKaPredictor(backend='molgpka')
+mdl = PKaPredictor(backend='resources')
 micro = mdl.predict_microstates("CC(=O)O", pH=7.4)
 
 print(f"Dominant pKa: {micro['pka']}")
@@ -98,7 +98,7 @@ Pick-a-pka includes a powerful drawing engine to visualize how a molecule’s io
 Generate a plot showing the distribution of all ionization states from pH 0 to 14.
 
 ```python
-from pick_a_pka.molgpka.draw import plot_microspecies_distribution
+from pick_a_pka.backends.molgpka import plot_microspecies_distribution
 from rdkit import Chem
 
 mol = Chem.MolFromSmiles("c1ccc(C(C(=O)O)N)cc1")
@@ -111,7 +111,8 @@ img.show()
 Draw the molecule with predicted pKa values callouts.
 
 ```python
-from pick_a_pka.molgpka.draw import draw_pka
+from pick_a_pka.backends.molgpka import draw_pka
+
 svg_text = draw_pka(mol, vector=True)
 ```
 

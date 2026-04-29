@@ -91,7 +91,8 @@ def mol_to_graph(mol, atom_idx, pka=None):
 
 
 def split_acid_base_pattern():
-    with resources.as_file(resources.files("pick_a_pka.molgpka").joinpath("smarts_pattern.tsv")) as smarts_file:
+    pkg = resources.files("pick_a_pka.backends.molgpka")
+    with resources.as_file(pkg.joinpath("smarts_pattern.tsv")) as smarts_file:
         df_smarts = pd.read_csv(smarts_file, sep="\t")
     df_smarts_acid = df_smarts[df_smarts.Acid_or_base == "A"]
     df_smarts_base = df_smarts[df_smarts.Acid_or_base == "B"]
