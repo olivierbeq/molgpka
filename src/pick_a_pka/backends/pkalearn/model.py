@@ -49,7 +49,7 @@ class PkaLearnModel(BasePKaModel):
         self.model.load_state_dict(state_dict)
 
     @torch.no_grad()
-    def predict(self, mol_or_smiles, **kwargs):
+    def predict(self, mol_or_smiles):
         """
         Runs the full iterative deprotonation ladder.
         Returns a list of dicts: [{'smiles': ..., 'center': ..., 'pka': ...}, ...]
@@ -64,10 +64,8 @@ class PkaLearnModel(BasePKaModel):
 
         return predict_ladder(self, smiles_str, self.config)
 
-    def predict_pka(self, mol, **kwargs):
     def predict_pka(self, mol):
         mol_clean = Chem.RemoveHs(mol) if isinstance(mol, Chem.Mol) else Chem.MolFromSmiles(mol)
-        ladder = self.predict(mol_clean, **kwargs)
         ladder = self.predict(mol_clean)
 
         base_pka = {}

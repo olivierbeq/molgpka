@@ -7,23 +7,20 @@ from .backends.pkalearn.model import PkaLearnModel
 
 class PKaPredictor:
     def __init__(
-        self,
-        model: Literal["pkalearn", "molgpka"] = "pkalearn",
-        device: str = "cpu",
-            **kwargs,
+            self,
+            model: Literal["pkalearn", "molgpka"] = "pkalearn",
+            device: str = "cpu",
     ):
         if model not in ["molgpka", "pkalearn"]:
             raise ValueError(f"Unknown backend: {model}. Choose 'molgpka' or 'pkalearn'.")
 
         self.model_name = model
         self.device = device
-        self.kwargs = kwargs
-        self.kwargs = kwargs
 
         if self.model_name == "molgpka":
             self.model = MolGpKaModel(device=self.device)
         elif self.model_name == "pkalearn":
-            self.model = PkaLearnModel(device=self.device, **self.kwargs)
+            self.model = PkaLearnModel(device=self.device)
 
     def __del__(self):
         # GPU cleanup
