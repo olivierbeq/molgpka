@@ -43,6 +43,7 @@ def swap_bond_atoms(mol_A, mol_B, center, distance_matrix):
 
     return mw_A, mw_B
 
+
 def whichElement(smiles, j):
     if smiles[j] == 'F' or smiles[j] == 'I' or smiles[j] == 'P':
         return j, smiles[j], 'none', 'none'

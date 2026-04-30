@@ -1,12 +1,12 @@
 import io
-import re
 import math
 import random
+import re
 from io import BytesIO
 
+import cairosvg
 import matplotlib.pyplot as plt
 import numpy as np
-import cairosvg
 from PIL import Image
 from rdkit import Chem
 from rdkit.Chem import rdDepictor
@@ -308,7 +308,7 @@ def plot_microspecies_distribution(mol: Chem.Mol, model: MolGpKaModel = None, ve
 
         injections.append(
             f'<svg x="{anchor_x}" y="{anchor_y}" width="{mol_size_pt}" height="{mol_size_pt}">\n{svg_mol}\n</svg>'
-            )
+        )
 
         line_y_pt = (top_margin_in + plot_height_in + (row + 0.88) * row_height_in) * 72.0
         line_w_pt = 60
@@ -345,7 +345,7 @@ def plot_microspecies_distribution(mol: Chem.Mol, model: MolGpKaModel = None, ve
 
     injections.append(
         f'<svg x="{annotated_x_pt}" y="{annotated_y_pt}" width="{annotated_size_pt}" height="{annotated_size_pt}">\n{annotated_svg}\n</svg>'
-        )
+    )
 
     end_tag_idx = mpl_svg.rfind('</svg>')
     final_svg = mpl_svg[:end_tag_idx] + "\n".join(injections) + "\n</svg>"

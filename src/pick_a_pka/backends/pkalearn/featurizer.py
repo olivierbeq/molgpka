@@ -1,9 +1,10 @@
-import torch
+import copy
+
 import numpy as np
+import torch
 from rdkit import Chem
 from rdkit.Chem import rdmolops
 from torch_geometric.data import Data
-import copy
 
 from .utils import swap_bond_atoms
 
@@ -155,12 +156,12 @@ def get_edge_features(mol, config):
                                     break
                                 if (a1 == central_atom and mol.GetAtomWithIdx(a2
                                                                               ).GetFormalCharge() == 0 and mol.GetAtomWithIdx(
-                                        a2
-                                        ).GetSymbol() in ["O", "N"]) or \
+                                    a2
+                                ).GetSymbol() in ["O", "N"]) or \
                                         (a2 == central_atom and mol.GetAtomWithIdx(a1
                                                                                    ).GetFormalCharge() == 0 and mol.GetAtomWithIdx(
                                             a1
-                                            ).GetSymbol() in ["O", "N"]):
+                                        ).GetSymbol() in ["O", "N"]):
                                     weakConjugation = 1
 
             if config['bond_feature_conjugation']:

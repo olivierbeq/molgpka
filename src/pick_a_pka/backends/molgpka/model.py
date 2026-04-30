@@ -1,12 +1,13 @@
-import torch
-from rdkit import Chem
-from rdkit.Chem.MolStandardize import rdMolStandardize
-from rdkit.Chem import AllChem
 from importlib import resources
 
+import torch
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from rdkit.Chem.MolStandardize import rdMolStandardize
+
 from pick_a_pka.core.base import BasePKaModel
-from .network import MolGpKaNet
 from .featurizer import mol_to_graph, get_ionization_aid
+from .network import MolGpKaNet
 from .protonation import compute_microstates
 
 

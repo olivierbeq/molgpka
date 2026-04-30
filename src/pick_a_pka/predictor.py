@@ -1,4 +1,5 @@
 from typing import Literal
+
 from rdkit import Chem
 
 from .backends.molgpka.model import MolGpKaModel

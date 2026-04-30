@@ -29,7 +29,7 @@ class PkaLearnGNN(torch.nn.Module):
         for i in range(self.gnn_layers - 1):
             self.conv_layers.append(
                 GATv2Conv(embedding_size, embedding_size, heads=n_heads, edge_dim=edge_dim, dropout=self.p, concat=True)
-                )
+            )
             self.transf_layers.append(Linear(embedding_size * n_heads, embedding_size))
             self.bn_layers.append(BatchNorm1d(embedding_size))
 

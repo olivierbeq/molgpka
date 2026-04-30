@@ -1,10 +1,11 @@
+from importlib import resources
+
 import numpy as np
 import pandas as pd
 import torch
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from torch_geometric.data import Data
-from importlib import resources
 
 
 def one_hot(x, allowable_set):

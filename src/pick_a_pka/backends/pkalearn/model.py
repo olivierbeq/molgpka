@@ -1,9 +1,10 @@
-import torch
-from rdkit import Chem
 from importlib import resources
 
-from pick_a_pka.core.base import BasePKaModel
+import torch
+from rdkit import Chem
+
 from .network import PkaLearnGNN
+from ...core.base import BasePKaModel
 
 
 class PkaLearnModel(BasePKaModel):

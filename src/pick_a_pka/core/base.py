@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 from rdkit import Chem
 
+
 class BasePKaModel(ABC):
     def __init__(self, device="cpu"):
         self.device = device

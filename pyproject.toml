@@ -1,5 +1,5 @@
 [build-system]
-requires =["setuptools>=61.0"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "A pKa prediction framework"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies =[
+dependencies = [
     "torch>=2.5.0",
     "torch-geometric>=2.6.0",
     "rdkit>=2024.03.1",

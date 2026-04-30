@@ -1,7 +1,8 @@
 import math
-import numpy as np
 from copy import deepcopy
 from itertools import combinations
+
+import numpy as np
 from rdkit import Chem
 
 

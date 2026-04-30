@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2017-Present OpenNMT, 
+Copyright (c) 2017-Present OpenNMT,
 Copyright (c) 2026-Present Moitessier Research Group,
 Copyright (c) 2026-Present Olivier J. M. Béquignon
 

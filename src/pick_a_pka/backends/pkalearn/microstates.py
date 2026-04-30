@@ -1,5 +1,7 @@
 import copy
+
 from rdkit import Chem
+
 from .change_ionization import parse_smiles, find_centers, addHs, ionizeN
 from .featurizer import mol_to_graph
 from .inference import predict_single
