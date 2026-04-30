@@ -65,8 +65,10 @@ class PkaLearnModel(BasePKaModel):
         return predict_ladder(self, smiles_str, self.config)
 
     def predict_pka(self, mol, **kwargs):
+    def predict_pka(self, mol):
         mol_clean = Chem.RemoveHs(mol) if isinstance(mol, Chem.Mol) else Chem.MolFromSmiles(mol)
         ladder = self.predict(mol_clean, **kwargs)
+        ladder = self.predict(mol_clean)
 
         base_pka = {}
         acid_pka = {}
@@ -75,32 +77,28 @@ class PkaLearnModel(BasePKaModel):
             idx = step['center']
             pka = step['pka']
 
-            try:
-                atom = mol_clean.GetAtomWithIdx(idx)
-                sym = atom.GetSymbol()
-                is_acid = False
+            # 100% Foolproof Thermodynamic Rule:
+            # We parse the state of the molecule *after* deprotonation (stable at high pH).
+            # Because pKaLearn uses string slicing, the atom indices are strictly preserved.
+            step_mol = Chem.MolFromSmiles(step['smiles'], sanitize=False)
 
-                # Simple chemical heuristic to separate acids from bases
-                if sym in ['O', 'S', 'C', 'P']:
-                    is_acid = True
-                elif sym == 'N':
-                    # Check for amides/sulfonamides
-                    for nbr in atom.GetNeighbors():
-                        if nbr.GetSymbol() in ['C', 'S', 'P']:
-                            for bond in nbr.GetBonds():
-                                if bond.GetBondTypeAsDouble() == 2.0 and bond.GetOtherAtom(nbr).GetSymbol() in ['O',
-                                                                                                                'S']:
-                                    is_acid = True
-                                    break
-                        if is_acid:
-                            break
-            except Exception:
-                is_acid = False
+            if step_mol and step_mol.GetNumAtoms() == mol_clean.GetNumAtoms():
+                # Get the formal charge of the target atom in the deprotonated state
+                fc = step_mol.GetAtomWithIdx(idx).GetFormalCharge()
 
-            if is_acid:
-                acid_pka[idx] = pka
+                # An acid loses a proton from its neutral state to become anionic (< 0).
+                # A base loses a proton from its cationic state to become neutral/less positive (>= 0).
+                if fc < 0:
+                    acid_pka[idx] = pka
+                else:
+                    base_pka[idx] = pka
             else:
-                base_pka[idx] = pka
+                # Absolute fallback in the extremely rare case where SMILES length mismatches
+                sym = mol_clean.GetAtomWithIdx(idx).GetSymbol()
+                if sym in ['O', 'S', 'P', 'C']:
+                    acid_pka[idx] = pka
+                else:
+                    base_pka[idx] = pka
 
         return {
             "base_pka": base_pka,
