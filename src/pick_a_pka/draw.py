@@ -13,18 +13,17 @@ from rdkit.Chem import rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Geometry import Point2D
 
-from .model import MolGpKaModel
-from .protonation import calculate_microspecies_abundances
+from .predictor import PKaPredictor
 
 
-def draw_pka(mol: Chem.Mol, model: MolGpKaModel = None, uncharged: bool = True, image_size=(800, 800),
+def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 800),
              padding: float = 0.1, vector: bool = True) -> str | Image.Image:
     if model is None:
-        model = MolGpKaModel()
+        model = PKaPredictor()
 
-    mol_copy = Chem.Mol(mol)
+    mol_copy = Chem.Mol(model._to_mol(mol)[0])
 
-    pred = model.predict_pka(mol_copy, uncharged=uncharged)
+    pred = model.predict_pka(mol_copy)
     base_pka, acid_pka, mol_copy = pred["base_pka"], pred["acid_pka"], pred["mol"]
 
     rdDepictor.SetPreferCoordGen(False)
@@ -187,20 +186,38 @@ def draw_pka(mol: Chem.Mol, model: MolGpKaModel = None, uncharged: bool = True, 
     return Image.open(io.BytesIO(content))
 
 
-def plot_microspecies_distribution(mol: Chem.Mol, model: MolGpKaModel = None, vector: bool = True) -> str | Image.Image:
+def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = None,
+                                   vector: bool = True) -> str | Image.Image:
     if model is None:
-        model = MolGpKaModel()
+        model = PKaPredictor()
 
-    abundance_data = calculate_microspecies_abundances(model, mol, ph_range=(0, 14), ph_step=0.05)
-    pred = model.predict_pka(mol, uncharged=True)
+    micro_data = model.predict_microstates(mol, ph_range=(0, 14), ph_step=0.05)
+    pred = model.predict_pka(mol)
     base_pka_dict, acid_pka_dict = pred["base_pka"], pred["acid_pka"]
 
-    X_pH = sorted(abundance_data.keys())
-    num_states = len(abundance_data[X_pH[0]])
+    X_pH = sorted(micro_data.keys())
+
+    unique_states = {}
+    for ph in X_pH:
+        for dist in micro_data[ph]['distribution']:
+            smi = dist['smiles']
+            if smi not in unique_states:
+                unique_states[smi] = dist['mol']
+
+    state_smiles = list(unique_states.keys())
+    num_states = len(state_smiles)
     Y_abundances = []
 
-    for state_idx in range(num_states):
-        y_curve = [list(abundance_data[ph].keys())[state_idx] for ph in X_pH]
+    for smi in state_smiles:
+        y_curve = []
+        for ph in X_pH:
+            dist_list = micro_data[ph]['distribution']
+            abundance = 0.0
+            for d in dist_list:
+                if d['smiles'] == smi:
+                    abundance = d['abundance']
+                    break
+            y_curve.append(abundance)
         Y_abundances.append(y_curve)
 
     colors = ['#e74c3c', '#3498db', '#f39c12', '#2ecc71', '#9b59b6', '#34495e', '#8c564b', '#e377c2',
@@ -228,7 +245,7 @@ def plot_microspecies_distribution(mol: Chem.Mol, model: MolGpKaModel = None, ve
     bottom_margin_frac = bottom_margin_in / fig_height_in
 
     fig = plt.figure(figsize=(fig_width_in, fig_height_in))
-    ax = fig.add_axes([plot_left_margin_frac, bottom_margin_frac, plot_width_frac, ax_height_frac])
+    ax = fig.add_axes((plot_left_margin_frac, bottom_margin_frac, plot_width_frac, ax_height_frac))
 
     for i in range(num_states):
         c_idx = i % len(colors)
@@ -263,7 +280,7 @@ def plot_microspecies_distribution(mol: Chem.Mol, model: MolGpKaModel = None, ve
     plt.close(fig)
     mpl_svg = buf.getvalue()
 
-    state_molecules = list(abundance_data[X_pH[0]].values())
+    state_molecules = list(unique_states.values())
     injections = []
 
     mol_size_pt = 160
@@ -324,7 +341,7 @@ def plot_microspecies_distribution(mol: Chem.Mol, model: MolGpKaModel = None, ve
                           f'stroke="{colors[c_idx]}" stroke-width="4" {dash_str} />'
                           )
 
-    annotated_svg = draw_pka(mol, model=model, vector=True, image_size=(internal_res, internal_res), padding=0.075)
+    annotated_svg = draw_pka(mol, model=model, vector=True, image_size=(internal_res, internal_res), padding=0.15)
     start_idx = annotated_svg.find('<svg')
     if start_idx != -1: annotated_svg = annotated_svg[start_idx:]
     annotated_svg = re.sub(r"width='.*?px'", "width='100%'", annotated_svg, count=1)

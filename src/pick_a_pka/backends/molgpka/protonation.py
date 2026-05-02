@@ -84,14 +84,14 @@ def calculate_microspecies_abundances(model, mol, ph=None, ph_range=None, ph_ste
             result[key] = state_mol
         return result
 
-    if ph is not None:
-        return get_abundances_at_ph(ph)
-    else:
+    if ph_range is not None:
         results_over_range = {}
         for current_ph in np.arange(ph_range[0], ph_range[1] + (ph_step / 2), ph_step):
             rounded_ph = round(current_ph, max(0, int(math.ceil(-math.log10(ph_step)))))
             results_over_range[rounded_ph] = get_abundances_at_ph(current_ph)
         return results_over_range
+    else:
+        return get_abundances_at_ph(ph)
 
 
 def compute_microstates(model, mol, ph=7.4, ph_range=None, ph_step=None) -> MicrostateResult | dict[
