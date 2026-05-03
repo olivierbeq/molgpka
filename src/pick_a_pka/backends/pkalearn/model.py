@@ -1,3 +1,4 @@
+import copy
 from importlib import resources
 
 import torch
@@ -58,7 +59,11 @@ class PkaLearnModel(BasePKaModel):
     def predict(self, mol_or_smiles):
         """
         Runs the full iterative deprotonation ladder.
-        Returns a list of dicts: [{'smiles': ..., 'center': ..., 'pka': ...}, ...]
+
+        Returns a tuple (ladder, starting_mol) where:
+          - ladder is a list of LadderStep dicts: [{'smiles', 'center', 'pka'}, ...]
+          - starting_mol is the RDKit Mol actually fed to the ladder (pre-protonated
+            when allow_amphoteric=True).
         """
         from .microstates import predict_ladder
 
@@ -70,13 +75,14 @@ class PkaLearnModel(BasePKaModel):
         mol_clean = Chem.RemoveHs(mol)
 
         if self.allow_amphoteric:
-            # Pre-protonate all neutral nitrogens so they enter the ladder at the top
+            # Pre-protonate all neutral nitrogens so they enter the ladder at the top.
+            # Only aliphatic nitrogens with degree <= 3 are touched; aromatic ones are
+            # left unchanged (SetFormalCharge on an aromatic n breaks kekulization).
             rw_mol = Chem.RWMol(mol_clean)
             patt = Chem.MolFromSmarts('[#7+0]')
             if patt:
                 for m in rw_mol.GetSubstructMatches(patt):
                     atom = rw_mol.GetAtomWithIdx(m[0])
-                    # Guard against over-bonding limits
                     if atom.GetDegree() <= 3:
                         atom.SetFormalCharge(1)
                         atom.SetNumExplicitHs(atom.GetNumExplicitHs() + 1)
@@ -84,49 +90,99 @@ class PkaLearnModel(BasePKaModel):
                 Chem.SanitizeMol(rw_mol)
                 mol_clean = rw_mol.GetMol()
             except Exception:
-                # Fallback to the original cleanly stripped molecule if RDKit rejects
                 mol_clean = Chem.RemoveHs(mol)
 
-        # Using non-canonical SMILES preserves the native node order perfectly
+        # Non-canonical SMILES preserves the native node order perfectly.
         smiles_str = Chem.MolToSmiles(mol_clean, canonical=False)
-        return predict_ladder(self, smiles_str, self.config, allow_amphoteric=self.allow_amphoteric)
+        # The ladder runs with allow_amphoteric=False: amphoteric second-pass inference
+        # is handled entirely in predict_pka, not inside the ladder, to avoid duplicate
+        # steps for the same atom.
+        ladder = predict_ladder(self, smiles_str, self.config, allow_amphoteric=False)
+        return ladder, mol_clean
 
     def predict_pka(self, mol):
-        mol_clean = Chem.RemoveHs(mol) if isinstance(mol, Chem.Mol) else Chem.MolFromSmiles(mol)
-        ladder = self.predict(mol_clean)
+        from .featurizer import from_acid_to_base
+        from .featurizer import mol_to_graph
+        from .inference import predict_single
+
+        neutral_mol = Chem.RemoveHs(mol) if isinstance(mol, Chem.Mol) else Chem.MolFromSmiles(mol)
+        ladder, _ = self.predict(Chem.Mol(neutral_mol))
 
         base_pka = {}
         acid_pka = {}
 
         for step in ladder:
             pka = step['pka']
-            step_mol = Chem.MolFromSmiles(step['smiles'], sanitize=False)
-
-            if not step_mol:
-                continue
-
             idx = step['center']
 
-            # Since pKaLearn parses from canonical=False SMILES, indices map 1:1.
-            # Catch unexpected indexing mismatches purely as a safety mechanism
-            if idx >= mol_clean.GetNumAtoms():
+            if idx >= neutral_mol.GetNumAtoms():
                 continue
 
-            # Look at the atom in its DEPROTONATED state
-            fc = step_mol.GetAtomWithIdx(idx).GetFormalCharge()
+            # step['smiles'] is the protonated (acid-form) SMILES the ladder was
+            # evaluating. Apply from_acid_to_base to simulate removing one proton,
+            # then check the resulting fc at the center atom:
+            #   fc < 0  -> deprotonation produced an anion  -> acidic pKa
+            #   fc >= 0 -> deprotonation produced a neutral -> basic pKa
+            step_mol = Chem.MolFromSmiles(step['smiles'])
+            if step_mol is None:
+                step_mol = Chem.MolFromSmiles(step['smiles'], sanitize=False)
+            if step_mol is None or idx >= step_mol.GetNumAtoms():
+                continue
 
-            # 100% Thermodynamic Rule:
-            # If deprotonation yields an anion (fc < 0), it's an ACIDIC pKa.
-            # If deprotonation yields a neutral species (fc >= 0), it's a BASIC pKa.
-            if fc < 0:
-                acid_pka[idx] = pka
+            deprotonated = copy.deepcopy(step_mol)
+            b_found, deprotonated, _ = from_acid_to_base(deprotonated, idx)
+            if not b_found:
+                continue
+
+            post_fc = deprotonated.GetAtomWithIdx(idx).GetFormalCharge()
+            if post_fc < 0:
+                # Only record as acidic if this atom was not already seen as basic —
+                # a duplicate acid entry for a basic atom means the ladder visited it
+                # twice (once per ionization state), and the amphoteric extension below
+                # will provide the correct acid pKa from the neutral context instead.
+                if idx not in base_pka:
+                    acid_pka[idx] = pka
             else:
                 base_pka[idx] = pka
+
+        # --- Amphoteric extension ---
+        # Atoms classified as basic (e.g. NH3+ -> NH2 in the ladder) still carry a
+        # proton in their *neutral* form and can also act as acids (NH2 -> NH-).
+        # The ladder never reaches that second deprotonation (it advanced after the
+        # basic step). When allow_amphoteric=True we run one extra inference pass per
+        # such atom, using the neutral molecule as the GNN input context.
+        if self.allow_amphoteric and base_pka:
+            for idx in list(base_pka.keys()):
+                if idx in acid_pka:
+                    continue
+
+                atom = neutral_mol.GetAtomWithIdx(idx)
+
+                # Must carry a proton in its neutral form to act as an acid
+                if atom.GetTotalNumHs() == 0:
+                    continue
+                # Only meaningful for classic amphoteric heteroatoms
+                if atom.GetSymbol() not in ('N', 'O', 'S', 'P'):
+                    continue
+
+                # Confirm deprotonation of the neutral atom yields an anion
+                mol_check = copy.deepcopy(neutral_mol)
+                b_found, mol_check, _ = from_acid_to_base(mol_check, idx)
+                if not b_found:
+                    continue
+                if mol_check.GetAtomWithIdx(idx).GetFormalCharge() >= 0:
+                    continue  # no anion formed -> not a genuine acidic site
+
+                data = mol_to_graph(copy.deepcopy(neutral_mol), idx, self.config)
+                if data is None:
+                    continue
+
+                acid_pka[idx] = predict_single(self.model, data, self.device)
 
         return {
             "base_pka": base_pka,
             "acid_pka": acid_pka,
-            "mol": mol_clean
+            "mol": neutral_mol
         }
 
     def predict_microstates(self, mol, ph=7.4, ph_range=None, ph_step=None):

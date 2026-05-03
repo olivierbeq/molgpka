@@ -201,27 +201,12 @@ def predict_ladder(model_wrapper, original_smiles, config, allow_amphoteric=Fals
 
 def compute_microstates(model_wrapper, mol, ph=7.4, ph_range=None, ph_step=None) -> MicrostateResult | dict[
     float, MicrostateResult]:
-    # Run predictions, taking advantage of pre-protonation in predict()
-    ladder = model_wrapper.predict(mol)
+    # predict() now returns (ladder, starting_mol); use starting_mol directly as
+    # the fully-protonated first state instead of re-implementing pre-protonation here.
+    ladder, start_mol = model_wrapper.predict(mol)
     all_pkas = sorted([step["pka"] for step in ladder])
 
     if ladder:
-        # Recreate the fully protonated starting state
-        mol_clean = Chem.RemoveHs(mol)
-        if model_wrapper.allow_amphoteric:
-            rw_mol = Chem.RWMol(mol_clean)
-            patt = Chem.MolFromSmarts('[#7+0]')
-            if patt:
-                for m in rw_mol.GetSubstructMatches(patt):
-                    atom = rw_mol.GetAtomWithIdx(m[0])
-                    if atom.GetDegree() <= 3:
-                        atom.SetFormalCharge(1)
-                        atom.SetNumExplicitHs(atom.GetNumExplicitHs() + 1)
-            Chem.SanitizeMol(rw_mol, catchErrors=True)
-            start_mol = rw_mol.GetMol()
-        else:
-            start_mol = mol_clean
-
         states = [start_mol] + [Chem.MolFromSmiles(step["smiles"]) for step in ladder]
     else:
         states = [mol]
