@@ -27,3 +27,6 @@ where = ["src"]
 "pick_a_pka.models.pkalearn" = ["*.pt", "*.pth", "*.pkl", "*.json"]
 "pick_a_pka.models.molgpka" = ["*.pth", "*.pt"]
 "pick_a_pka.molgpka" = ["*.tsv"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov"]
