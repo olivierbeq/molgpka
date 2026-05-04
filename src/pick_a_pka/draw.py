@@ -14,6 +14,7 @@ from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Geometry import Point2D
 
 from .predictor import PKaPredictor
+from .core.canonicalize import orient_canonically
 
 
 def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 800),
@@ -24,12 +25,19 @@ def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 8
     mol_copy = Chem.Mol(model._to_mol(mol)[0])
 
     pred = model.predict_pka(mol_copy)
-    base_pka, acid_pka, mol_copy = pred["base_pka"], pred["acid_pka"], pred["mol"]
+    base_pka, acid_pka, mol_drawn = pred["base_pka"], pred["acid_pka"], pred["mol"]
+
+    try:
+        # Force kekulization and strip aromatic dash properties for a publication-ready single/double bond plot
+        Chem.Kekulize(mol_drawn, clearAromaticFlags=True)
+    except Exception:
+        pass
 
     rdDepictor.SetPreferCoordGen(False)
-    rdDepictor.Compute2DCoords(mol_copy)
+    rdDepictor.Compute2DCoords(mol_drawn)
 
-    mol_prepared = rdMolDraw2D.PrepareMolForDrawing(mol_copy)
+    # Use kekulize=False here because we have already cleanly pre-kekulized above
+    mol_prepared = rdMolDraw2D.PrepareMolForDrawing(mol_drawn, kekulize=False)
     conf = mol_prepared.GetConformer()
     N_atoms = mol_prepared.GetNumAtoms()
 
@@ -186,10 +194,14 @@ def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 8
     return Image.open(io.BytesIO(content))
 
 
-def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = None,
-                                   vector: bool = True) -> str | Image.Image:
+def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = None, vector: bool = True) -> str | Image.Image:
     if model is None:
         model = PKaPredictor()
+
+    # Parse SMILES if needed
+    mol = model._to_mol(mol)[0]
+    # Canonicalize oritentation
+    mol = orient_canonically(mol)
 
     micro_data = model.predict_microstates(mol, ph_range=(0, 14), ph_step=0.05)
     pred = model.predict_pka(mol)
@@ -297,6 +309,14 @@ def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = No
         col = i % max_cols
         x_val = grid_x[col]
 
+        state_mol_drawn = Chem.Mol(state_mol)
+        try:
+            # Force kekulization and strip aromatic dash properties
+            Chem.Kekulize(state_mol_drawn, clearAromaticFlags=True)
+            mol_prep = rdMolDraw2D.PrepareMolForDrawing(state_mol_drawn, kekulize=False)
+        except Exception:
+            mol_prep = rdMolDraw2D.PrepareMolForDrawing(state_mol_drawn)
+
         drawer = rdMolDraw2D.MolDraw2DSVG(internal_res, internal_res)
         opts = drawer.drawOptions()
         opts.padding = 0.1
@@ -305,7 +325,6 @@ def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = No
         if hasattr(opts, 'maxFontSize'):
             opts.maxFontSize = 24
 
-        mol_prep = rdMolDraw2D.PrepareMolForDrawing(state_mol)
         drawer.DrawMolecule(mol_prep)
         drawer.FinishDrawing()
 
