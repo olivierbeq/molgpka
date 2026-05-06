@@ -9,6 +9,61 @@ from .core.exceptions import InvalidBackendError
 from .core.types import BackendType, MicrostateResult
 
 
+def _generate_ordered_states(mol_no_hs, base_pka_dict, acid_pka_dict):
+    """Return a list of RDKit molecules representing the protonation states
+    in ascending pKa order (most protonated → most deprotonated).
+
+    This is the backend-agnostic implementation of the protonation ladder.
+    It mirrors MolGpKa's _generate_microspecies_sequence and works for any
+    backend whose predict_pka returns base_pka / acid_pka / mol dicts.
+    """
+    ionizable_sites = []
+    for idx, pka in base_pka_dict.items():
+        ionizable_sites.append((pka, idx, 'base'))
+    for idx, pka in acid_pka_dict.items():
+        ionizable_sites.append((pka, idx, 'acid'))
+    ionizable_sites.sort(key=lambda x: x[0])
+
+    if not ionizable_sites:
+        return [mol_no_hs]
+
+    unique_atoms = {idx for _, idx, _ in ionizable_sites}
+    # For each ionizable atom, count how many basic pKa values it has —
+    # that determines its charge in the fully-protonated state.
+    fully_protonated_charges = {
+        atom_idx: sum(1 for _, i, t in ionizable_sites if i == atom_idx and t == 'base')
+        for atom_idx in unique_atoms
+    }
+
+    states = []
+    for k in range(len(ionizable_sites) + 1):
+        rw = Chem.RWMol(mol_no_hs)
+        try:
+            Chem.Kekulize(rw, clearAromaticFlags=True)
+        except Exception:
+            pass
+
+        for atom_idx in unique_atoms:
+            atom = rw.GetAtomWithIdx(atom_idx)
+            atom.SetNumExplicitHs(0)
+            atom.SetNoImplicit(False)
+            atom.SetFormalCharge(fully_protonated_charges[atom_idx])
+
+        for i in range(k):
+            _, idx, _ = ionizable_sites[i]
+            atom = rw.GetAtomWithIdx(idx)
+            atom.SetFormalCharge(atom.GetFormalCharge() - 1)
+
+        try:
+            rw.UpdatePropertyCache(strict=False)
+            Chem.SanitizeMol(rw)
+            states.append(rw.GetMol())
+        except Exception:
+            pass
+
+    return states
+
+
 class PKaPredictor(BasePKaModel):
     def __init__(
             self,
@@ -64,3 +119,47 @@ class PKaPredictor(BasePKaModel):
             for mol_ in mols
         ]
         return results if isinstance(mol, list) else results[0]
+
+    def protonation_ladder(
+            self,
+            mol: Chem.Mol | str,
+            acid_first: bool = True,
+    ) -> list[str]:
+        """Return the protonation states of a molecule as a list of canonical SMILES,
+        ordered along the deprotonation ladder.
+
+        The ladder is derived from :meth:`predict_pka` and is therefore
+        backend-agnostic: it works identically for both ``molgpka`` and
+        ``pkalearn``.
+
+        :param mol: molecule or SMILES string.
+        :param acid_first: if ``True`` (default), the list runs from the most
+            protonated state (lowest pH / highest charge) to the most
+            deprotonated state.  Set to ``False`` to reverse the order
+            (most deprotonated first).
+        :return: list of canonical SMILES strings, one per protonation state,
+            in the requested order.  Always contains at least one entry (the
+            neutral input molecule) even for non-ionisable structures.
+        """
+        input_mol = self._to_mol(mol)[0]
+        pred = self.predict_pka(input_mol)
+        mol_no_hs = pred["mol"]
+        base_pka_dict = pred["base_pka"]
+        acid_pka_dict = pred["acid_pka"]
+
+        states = _generate_ordered_states(mol_no_hs, base_pka_dict, acid_pka_dict)
+
+        # Deduplicate while preserving order (identical SMILES can arise when
+        # two ionizable atoms have identical pKa values and RDKit collapses them).
+        seen = set()
+        smiles_list = []
+        for state_mol in states:
+            smi = Chem.MolToSmiles(state_mol)
+            if smi not in seen:
+                seen.add(smi)
+                smiles_list.append(smi)
+
+        if not acid_first:
+            smiles_list = list(reversed(smiles_list))
+
+        return smiles_list

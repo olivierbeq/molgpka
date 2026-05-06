@@ -5,7 +5,7 @@ import numpy as np
 from rdkit import Chem
 
 from .change_ionization import parse_smiles, find_centers, addHs, ionizeN
-from .featurizer import mol_to_graph, from_acid_to_base
+from .featurizer import mol_to_graph
 from .inference import predict_single
 from ...core.types import LadderStep, MicrostateResult, StateDistribution
 
@@ -155,7 +155,8 @@ def predict_ladder(model_wrapper, original_smiles, config, allow_amphoteric=Fals
             smiles=best_smiles,
             center=best_center,
             pka=best_pka
-        ))
+        )
+        )
 
         curr_smiles = best_smiles
         curr_ion_states = states[best_idx]
@@ -171,39 +172,28 @@ def compute_microstates(model_wrapper, mol, ph=7.4, ph_range=None, ph_step=None)
     float, MicrostateResult]:
     """Build microstate distribution from the deprotonation ladder.
 
-    The ladder's step["smiles"] is the *protonated* (acid-form) input to the GNN
-    for that round — NOT the deprotonated product.  We therefore rebuild the state
-    sequence by applying from_acid_to_base at each step's center, chaining from the
-    previous state so that each entry is the genuine deprotonated structure.
+    Uses protonation_ladder (via the predictor wrapper) as the single source of
+    truth for the ordered state sequence, so that the SMILES in the distribution
+    are guaranteed to match those returned by protonation_ladder.  This removes
+    any reliance on step["center"] index mapping inside compute_microstates.
     """
-    ladder, start_mol = model_wrapper.predict(mol)
-    all_pkas = sorted([step["pka"] for step in ladder])
+    # model_wrapper is the backend model (PkaLearnModel); reach up to the
+    # PKaPredictor via the _predictor back-reference set in predict_microstates,
+    # or fall back to rebuilding states from predict_pka directly.
+    pred = model_wrapper.predict_pka(mol)
+    base_pka_dict = pred["base_pka"]
+    acid_pka_dict = pred["acid_pka"]
+    mol_no_hs = pred["mol"]
 
-    start_clean = Chem.RemoveHs(start_mol)
+    # Build the ordered state list using the same _generate_ordered_states
+    # helper that protonation_ladder uses, so SMILES are identical.
+    from ...predictor import _generate_ordered_states
+    states = _generate_ordered_states(mol_no_hs, base_pka_dict, acid_pka_dict)
 
-    if ladder:
-        states = [start_clean]
-        prev_mol = copy.deepcopy(start_clean)
-        for step in ladder:
-            idx = step["center"]
-            if idx >= prev_mol.GetNumAtoms():
-                states.append(prev_mol)
-                continue
-            mol_copy = copy.deepcopy(prev_mol)
-            found, mol_dep, _ = from_acid_to_base(mol_copy, idx)
-            if found:
-                try:
-                    Chem.SanitizeMol(mol_dep)
-                    dep_clean = Chem.RemoveHs(mol_dep)
-                    states.append(dep_clean)
-                    prev_mol = dep_clean
-                except Exception:
-                    states.append(prev_mol)
-            else:
-                states.append(prev_mol)
-    else:
-        neutral = Chem.RemoveHs(mol) if isinstance(mol, Chem.Mol) else Chem.MolFromSmiles(mol)
-        states = [neutral]
+    all_pkas = sorted(list(base_pka_dict.values()) + list(acid_pka_dict.values()))
+
+    def _major(dist):
+        return max(dist, key=lambda x: x["abundance"])
 
     def get_dist_at_ph(current_ph):
         if not all_pkas:
@@ -221,10 +211,12 @@ def compute_microstates(model_wrapper, mol, ph=7.4, ph_range=None, ph_step=None)
         total_ratio = sum(ratios)
         fractions = [(r / total_ratio) * 100.0 for r in ratios]
 
+        # Keep states in protonation-ladder order — do NOT sort by abundance.
+        # Sorting here would scramble the stable state->colour mapping that
+        # plot_microspecies_distribution relies on.
         dist = []
         for frac, state_mol in zip(fractions, states):
             dist.append(StateDistribution(smiles=Chem.MolToSmiles(state_mol), mol=state_mol, abundance=frac))
-        dist.sort(key=lambda x: x["abundance"], reverse=True)
         return dist
 
     if ph_range is not None:
@@ -234,16 +226,18 @@ def compute_microstates(model_wrapper, mol, ph=7.4, ph_range=None, ph_step=None)
         for current_ph in np.arange(ph_range[0], ph_range[1] + (ph_step / 2), ph_step):
             rounded_ph = round(current_ph, max(0, int(math.ceil(-math.log10(ph_step)))))
             dist = get_dist_at_ph(rounded_ph)
+            major = _major(dist)
             results[rounded_ph] = MicrostateResult(
-                major_state=dist[0]["mol"],
-                major_abundance=dist[0]["abundance"],
+                major_state=major["mol"],
+                major_abundance=major["abundance"],
                 distribution=dist
             )
         return results
 
     dist = get_dist_at_ph(ph)
+    major = _major(dist)
     return MicrostateResult(
-        major_state=dist[0]["mol"],
-        major_abundance=dist[0]["abundance"],
+        major_state=major["mol"],
+        major_abundance=major["abundance"],
         distribution=dist
     )

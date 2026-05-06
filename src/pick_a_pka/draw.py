@@ -209,14 +209,27 @@ def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = No
 
     X_pH = sorted(micro_data.keys())
 
-    unique_states = {}
-    for ph in X_pH:
-        for dist in micro_data[ph]['distribution']:
-            smi = dist['smiles']
-            if smi not in unique_states:
-                unique_states[smi] = dist['mol']
+    # protonation_ladder() and compute_microstates() both use _generate_ordered_states
+    # as their single source of truth, so the SMILES strings are guaranteed to match.
+    # state_smiles drives both curve ordering and thumbnail ordering.
+    state_smiles = model.protonation_ladder(mol, acid_first=True)
 
-    state_smiles = list(unique_states.keys())
+    # Build a mol lookup for thumbnail rendering.
+    # micro_data carries RDKit mol objects; index them by their canonical SMILES.
+    smi_to_mol = {}
+    for ph in X_pH:
+        for d in micro_data[ph]['distribution']:
+            smi = d['smiles']
+            if smi not in smi_to_mol:
+                smi_to_mol[smi] = d['mol']
+    # Fall back to parsing for any ladder state not represented in micro_data
+    # (e.g. extremely protonated/deprotonated states with negligible abundance).
+    for smi in state_smiles:
+        if smi not in smi_to_mol:
+            m = Chem.MolFromSmiles(smi)
+            if m is not None:
+                smi_to_mol[smi] = m
+
     num_states = len(state_smiles)
     Y_abundances = []
 
@@ -292,7 +305,61 @@ def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = No
     plt.close(fig)
     mpl_svg = buf.getvalue()
 
-    state_molecules = list(unique_states.values())
+    # -----------------------------------------------------------------------
+    # Reference 2D layout
+    # -----------------------------------------------------------------------
+    # mol has already been processed by orient_canonically, so it carries the
+    # canonical orientation we want every thumbnail to share.  We compute its
+    # 2D coordinates once and use them as a template for all microstate mols
+    # via GenerateDepictionMatching2DStructure.  This guarantees:
+    #   1. All thumbnails share the same scaffold orientation (no random spins).
+    #   2. Both backends produce the same orientation because the template is
+    #      derived from the neutral input mol, not from any backend-specific
+    #      atom ordering or charge state.
+    # ref_mol is derived from mol which already has orient_canonically applied.
+    # We must NOT recompute 2D coords — we copy mol's existing conformer so that
+    # GenerateDepictionMatching2DStructure uses that exact orientation as the
+    # template, giving all thumbnails the same layout and both backends the same
+    # orientation (since the template comes from the neutral input, not the backend).
+    ref_mol = Chem.RemoveHs(Chem.Mol(mol))
+    try:
+        Chem.Kekulize(ref_mol, clearAromaticFlags=True)
+    except Exception:
+        pass
+    if not ref_mol.GetNumConformers():
+        rdDepictor.SetPreferCoordGen(False)
+        rdDepictor.Compute2DCoords(ref_mol)
+
+    rdDepictor.SetPreferCoordGen(False)
+
+    def _apply_ref_layout(state_mol_raw):
+        """Return a mol with 2D coords constrained to the reference layout.
+
+        GenerateDepictionMatching2DStructure finds the MCS between state_mol
+        and ref_mol and fixes the matching atoms to ref_mol's coordinates,
+        then places any remaining atoms (e.g. new charges on N) consistently.
+        acceptFailure=True means that if matching fails the mol still gets
+        valid (unmatched) 2D coords rather than raising.
+        """
+        state_mol_kek = Chem.Mol(state_mol_raw)
+        try:
+            Chem.Kekulize(state_mol_kek, clearAromaticFlags=True)
+        except Exception:
+            pass
+        # Strip explicit Hs — they change between protonation states and
+        # would block substructure matching against the neutral ref_mol.
+        state_no_hs = Chem.RemoveHs(state_mol_kek)
+        # Compute a starting layout (required by GenerateDepictionMatching2DStructure)
+        rdDepictor.Compute2DCoords(state_no_hs)
+        try:
+            rdDepictor.GenerateDepictionMatching2DStructure(
+                state_no_hs, ref_mol, acceptFailure=True
+            )
+        except Exception:
+            pass
+        return state_no_hs
+
+    state_molecules = [_apply_ref_layout(smi_to_mol[smi]) for smi in state_smiles]
     injections = []
 
     mol_size_pt = 160
@@ -311,8 +378,6 @@ def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = No
 
         state_mol_drawn = Chem.Mol(state_mol)
         try:
-            # Force kekulization and strip aromatic dash properties
-            Chem.Kekulize(state_mol_drawn, clearAromaticFlags=True)
             mol_prep = rdMolDraw2D.PrepareMolForDrawing(state_mol_drawn, kekulize=False)
         except Exception:
             mol_prep = rdMolDraw2D.PrepareMolForDrawing(state_mol_drawn)
