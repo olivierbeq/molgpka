@@ -1,12 +1,10 @@
 """Tests for predict_microstates across both backends."""
 import pytest
+from unittest.mock import MagicMock
 from rdkit import Chem
 
+from constants import ACETIC_ACID
 from pick_a_pka import PKaPredictor
-
-ACETIC_ACID = "CC(=O)O"  # one acidic site, pKa ≈ 4.76
-MORPHOLINE = "C1COCCN1"  # one basic site, pKa ≈ 8.7
-GLYCINE = "NCC(=O)O"  # amphoteric
 
 
 @pytest.fixture(scope="module")
@@ -163,3 +161,29 @@ class TestChemicalCorrectness:
         for i in range(len(charges) - 1):
             # charges are sorted ascending; each step differs by exactly 1 unit
             assert abs(charges[i + 1] - charges[i]) == 1
+
+
+class TestPkaLearnMicrostates:
+    """Test non-ionizable molecules (lines 200-201: no pKas → single state)."""
+
+    def test_non_ionizable_single_state(self):
+        from pick_a_pka.backends.pkalearn.model import PkaLearnModel
+        m = PkaLearnModel(device="cpu")
+        result = m.predict_microstates("CCCC")  # butane — no ionizable sites
+        assert result is not None
+
+    def test_ph_range_without_step_raises(self):
+        from pick_a_pka.backends.pkalearn.microstates import compute_microstates
+        model = MagicMock()
+        model.predict_pka.return_value = {
+            "base_pka": {}, "acid_pka": {}, "mol": Chem.MolFromSmiles("C")
+        }
+        with pytest.raises(ValueError, match="ph_step"):
+            compute_microstates(model, Chem.MolFromSmiles("C"), ph_range=(0, 14), ph_step=None)
+
+    def test_ph_range_returns_dict(self):
+        from pick_a_pka.backends.pkalearn.model import PkaLearnModel
+        m = PkaLearnModel(device="cpu")
+        results = m.predict_microstates(ACETIC_ACID, ph_range=(6, 8), ph_step=1.0)
+        assert isinstance(results, dict)
+        assert len(results) >= 2

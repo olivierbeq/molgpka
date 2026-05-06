@@ -3,13 +3,7 @@ import pytest
 from rdkit import Chem
 
 from pick_a_pka import PKaPredictor
-
-# Molecules chosen to exercise both backends meaningfully
-ACETIC_ACID = "CC(=O)O"
-ANILINE = "c1ccccc1N"
-GLYCINE = "NCC(=O)O"
-BUTANE = "CCCC"
-MORPHOLINE = "C1COCCN1"  # secondary amine + ether: one basic site
+from constants import ACETIC_ACID, ANILINE, GLYCINE, BUTANE
 
 
 @pytest.fixture(scope="module")

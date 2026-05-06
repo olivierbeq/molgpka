@@ -1,29 +1,3 @@
-def swap_tensor_items(original_tensor, from_item_idx, to_item_idx):
-    new_tensor = original_tensor.clone()
-    new_tensor[[from_item_idx, to_item_idx]] = original_tensor[[to_item_idx, from_item_idx]]
-    return new_tensor
-
-
-def swap_tensor_columns(original_tensor, from_idx, to_idx, tensor_size):
-    new_tensor = original_tensor.clone()
-    new_tensor[:, [from_idx, to_idx]] = original_tensor[:, [to_idx, from_idx]]
-    return new_tensor
-
-
-def swap_tensor_values(original_tensor, from_idx, to_idx):
-    new_tensor = original_tensor.clone()
-    indexes_old = (original_tensor == from_idx)
-    new_tensor[indexes_old] = 999
-
-    indexes_old = (original_tensor == to_idx)
-    new_tensor[indexes_old] = from_idx
-
-    indexes_old = (original_tensor == 999)
-    new_tensor[indexes_old] = to_idx
-
-    return new_tensor
-
-
 def swap_bond_atoms(mol_A, mol_B, center, distance_matrix):
     from rdkit import Chem
     mw_A = Chem.RWMol(mol_A)
