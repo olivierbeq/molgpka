@@ -9,12 +9,84 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 from rdkit import Chem
-from rdkit.Chem import rdDepictor
+from rdkit.Chem import rdDepictor, rdFMCS
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Geometry import Point2D
 
 from .predictor import PKaPredictor
-from .core.canonicalize import orient_canonically
+from .core.canonicalize import orient_canonically, optimize_sensical_folding
+
+
+def _neutral_query(mol):
+    """Return a charge-stripped, Hs-removed copy for robust substructure matching
+    across protonation states."""
+    rw = Chem.RWMol(Chem.RemoveHs(mol))
+    for atom in rw.GetAtoms():
+        atom.SetFormalCharge(0)
+        atom.SetNumExplicitHs(0)
+        atom.SetNoImplicit(True)
+    try:
+        Chem.SanitizeMol(rw)
+    except Exception:
+        pass
+    return rw.GetMol()
+
+
+def _transfer_coords(ref_mol, target_mol):
+    """Copy 2D atom positions from ref_mol onto target_mol in-place.
+
+    Matching is done charge-agnostically so that protonation-state differences
+    (NH2 vs NH3+, COO- vs COOH) never block the substructure search.
+    The ref_mol must already carry a 2D conformer (e.g. from
+    optimize_sensical_folding).  After the transfer every atom of target_mol
+    that maps to ref_mol gets ref_mol's coordinates; any unmatched atoms
+    (rare) keep whatever layout Compute2DCoords gave them.
+    """
+    if ref_mol.GetNumConformers() == 0:
+        return  # nothing to transfer
+
+    ref_q = _neutral_query(ref_mol)
+    tgt_q = _neutral_query(target_mol)
+
+    # Try direct substructure match first (fast path, covers most cases)
+    match = target_mol.GetSubstructMatch(ref_q)
+    # match[i] = atom index in target_mol that corresponds to atom i in ref_q
+    # We need the inverse: for each atom in target_mol, which ref atom?
+    if match and len(match) == ref_q.GetNumAtoms():
+        ref_conf = ref_mol.GetConformer()
+        tgt_conf = target_mol.GetConformer()
+        for ref_idx, tgt_idx in enumerate(match):
+            p = ref_conf.GetAtomPosition(ref_idx)
+            tgt_conf.SetAtomPosition(tgt_idx, p)
+        return
+
+    # Fallback: MCS (handles larger charge/valence differences)
+    try:
+        mcs = rdFMCS.FindMCS(
+            [ref_q, tgt_q],
+            atomCompare=rdFMCS.AtomCompare.CompareElements,
+            bondCompare=rdFMCS.BondCompare.CompareAny,
+            completeRingsOnly=False,
+            matchValences=False,
+            matchChiralTag=False,
+            timeout=3,
+        )
+        if mcs.numAtoms == 0:
+            return
+        patt = Chem.MolFromSmarts(mcs.smartsString)
+        if patt is None:
+            return
+        ref_match = ref_q.GetSubstructMatch(patt)
+        tgt_match = tgt_q.GetSubstructMatch(patt)
+        if not ref_match or not tgt_match:
+            return
+        ref_conf = ref_mol.GetConformer()
+        tgt_conf = target_mol.GetConformer()
+        for ref_idx, tgt_idx in zip(ref_match, tgt_match):
+            p = ref_conf.GetAtomPosition(ref_idx)
+            tgt_conf.SetAtomPosition(tgt_idx, p)
+    except Exception:
+        pass
 
 
 def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 800),
@@ -22,7 +94,8 @@ def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 8
     if model is None:
         model = PKaPredictor()
 
-    mol_copy = Chem.Mol(model._to_mol(mol)[0])
+    input_mol = model._to_mol(mol)[0]
+    mol_copy = Chem.Mol(input_mol)
 
     pred = model.predict_pka(mol_copy)
     base_pka, acid_pka, mol_drawn = pred["base_pka"], pred["acid_pka"], pred["mol"]
@@ -34,7 +107,14 @@ def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 8
         pass
 
     rdDepictor.SetPreferCoordGen(False)
-    rdDepictor.Compute2DCoords(mol_drawn)
+    if input_mol.GetNumConformers() > 0:
+        # Caller has already established 2D coords (e.g. optimize_sensical_folding).
+        # mol_drawn is a RemoveHs copy returned by predict_pka — it has no conformer.
+        # Give it one first so _transfer_coords has a conformer to write into.
+        rdDepictor.Compute2DCoords(mol_drawn)
+        _transfer_coords(input_mol, mol_drawn)
+    else:
+        rdDepictor.Compute2DCoords(mol_drawn)
 
     # Use kekulize=False here because we have already cleanly pre-kekulized above
     mol_prepared = rdMolDraw2D.PrepareMolForDrawing(mol_drawn, kekulize=False)
@@ -194,14 +274,16 @@ def draw_pka(mol: Chem.Mol | str, model: PKaPredictor = None, image_size=(800, 8
     return Image.open(io.BytesIO(content))
 
 
-def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = None, vector: bool = True) -> str | Image.Image:
+def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = None,
+                                   vector: bool = True) -> str | Image.Image:
     if model is None:
         model = PKaPredictor()
 
     # Parse SMILES if needed
     mol = model._to_mol(mol)[0]
     # Canonicalize oritentation
-    mol = orient_canonically(mol)
+    # mol = orient_canonically(mol)
+    mol = optimize_sensical_folding(mol)
 
     micro_data = model.predict_microstates(mol, ph_range=(0, 14), ph_step=0.05)
     pred = model.predict_pka(mol)
@@ -306,57 +388,27 @@ def plot_microspecies_distribution(mol: Chem.Mol | str, model: PKaPredictor = No
     mpl_svg = buf.getvalue()
 
     # -----------------------------------------------------------------------
-    # Reference 2D layout
+    # Reference 2D layout — shared by every thumbnail
     # -----------------------------------------------------------------------
-    # mol has already been processed by orient_canonically, so it carries the
-    # canonical orientation we want every thumbnail to share.  We compute its
-    # 2D coordinates once and use them as a template for all microstate mols
-    # via GenerateDepictionMatching2DStructure.  This guarantees:
-    #   1. All thumbnails share the same scaffold orientation (no random spins).
-    #   2. Both backends produce the same orientation because the template is
-    #      derived from the neutral input mol, not from any backend-specific
-    #      atom ordering or charge state.
-    # ref_mol is derived from mol which already has orient_canonically applied.
-    # We must NOT recompute 2D coords — we copy mol's existing conformer so that
-    # GenerateDepictionMatching2DStructure uses that exact orientation as the
-    # template, giving all thumbnails the same layout and both backends the same
-    # orientation (since the template comes from the neutral input, not the backend).
-    ref_mol = Chem.RemoveHs(Chem.Mol(mol))
-    try:
-        Chem.Kekulize(ref_mol, clearAromaticFlags=True)
-    except Exception:
-        pass
-    if not ref_mol.GetNumConformers():
-        rdDepictor.SetPreferCoordGen(False)
-        rdDepictor.Compute2DCoords(ref_mol)
-
+    # mol already carries the optimize_sensical_folding conformer.
+    # _transfer_coords maps those coordinates onto each microstate mol
+    # charge-agnostically, so all thumbnails share the same scaffold
+    # orientation regardless of protonation state or backend.
     rdDepictor.SetPreferCoordGen(False)
 
     def _apply_ref_layout(state_mol_raw):
-        """Return a mol with 2D coords constrained to the reference layout.
-
-        GenerateDepictionMatching2DStructure finds the MCS between state_mol
-        and ref_mol and fixes the matching atoms to ref_mol's coordinates,
-        then places any remaining atoms (e.g. new charges on N) consistently.
-        acceptFailure=True means that if matching fails the mol still gets
-        valid (unmatched) 2D coords rather than raising.
-        """
+        """Return a mol whose atom positions match the optimize_sensical_folding
+        layout of the neutral reference mol."""
         state_mol_kek = Chem.Mol(state_mol_raw)
         try:
             Chem.Kekulize(state_mol_kek, clearAromaticFlags=True)
         except Exception:
             pass
-        # Strip explicit Hs — they change between protonation states and
-        # would block substructure matching against the neutral ref_mol.
         state_no_hs = Chem.RemoveHs(state_mol_kek)
-        # Compute a starting layout (required by GenerateDepictionMatching2DStructure)
+        # Provide a starting conformer (required before _transfer_coords can
+        # write into it), then overwrite matched-atom positions with ref coords.
         rdDepictor.Compute2DCoords(state_no_hs)
-        try:
-            rdDepictor.GenerateDepictionMatching2DStructure(
-                state_no_hs, ref_mol, acceptFailure=True
-            )
-        except Exception:
-            pass
+        _transfer_coords(mol, state_no_hs)
         return state_no_hs
 
     state_molecules = [_apply_ref_layout(smi_to_mol[smi]) for smi in state_smiles]
